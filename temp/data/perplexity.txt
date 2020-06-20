@@ -1,0 +1,1 @@
+320005	Inference LDA iteration 48: Perplexity=2558.5579985692984	Inference LDA iteration 49: Perplexity=2555.2665771385455	

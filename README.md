@@ -1,0 +1,4 @@
+打包用maven package
+打包之前先修改两个地方：
+hanlp.properties里的root地址，
+以及Recognizing.Java里面dictionary的地址
