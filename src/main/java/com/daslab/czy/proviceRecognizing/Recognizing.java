@@ -15,6 +15,8 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.bson.Document;
 
 import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.*;
 
 import static com.daslab.czy.Utils.HBaseUtils.saveToHBase;
@@ -26,7 +28,8 @@ public class Recognizing {
     static List<String> badCities = initBadCities();
     static List<String> badNames = initBadNames();
 
-    static Map<String,String> initDictionary() {
+    // Initialize the division_dictionary
+   static Map<String,String> initDictionary() {
         Map<String,String> result = new HashMap<>();
 
         String dictionaryName = "/home/leaves1233/IdeaProjects/UniqueTopics/src/main/resources/division_dictionary.json";
@@ -48,6 +51,7 @@ public class Recognizing {
         }
         return result;
     }
+
 
     static List<String> initBadCities(){
         List<String> badCities = new ArrayList<>();
@@ -102,6 +106,7 @@ public class Recognizing {
         }
     }
 
+    // recognize函数在Spark平台下的运行版本，在数据量大的时候会出现bug
     public static List<Document> recognize1(List<Document> records){
 //        try {
 //            System.setOut(new PrintStream(new BufferedOutputStream(
@@ -367,7 +372,12 @@ public class Recognizing {
         return result;
     }
 
-    public static List<Document> recognize(List<Document> records){
+    /**
+     *  识别新闻所属的行政区划
+     * @param records 预处理之后存储在mongoDB中的记录
+     * @return 行政区划识别后得到的记录
+     */
+    public static List<Document> recognize(List<Document> records) throws IOException {
 //        try {
 //            System.setOut(new PrintStream(new BufferedOutputStream(
 //                    new FileOutputStream("src/main/resources/out.txt")),true));
@@ -379,16 +389,18 @@ public class Recognizing {
         long startTime = System.currentTimeMillis();
         List<Document> result = new ArrayList<>();
         for(Document record : records){
-            String text = (String) record.get("news_text");
-            List<Token> tokens = (List<Token>) record.get("tokens");
+            String text = (String) record.get("news_text");  // 取出记录中的news_text属性，即新闻的正文
+            List<Token> tokens = (List<Token>) record.get("tokens"); // 取出记录中的token属性，即分词与词性标注的结果
             List<Token> rawLocations = new ArrayList<>();
             List<Token> trueLocations = new ArrayList<>();
             List<Token> roads = new ArrayList<>();
+            // 取出词性为ns的词，即地名实体，保存在rawLocations中
             for (Token token : tokens) {
                 if (token.pos.equals("ns")) {
                     rawLocations.add(token);
                 }
             }
+            // 识别出路名，并单独保存，剩下的地名实体保存在trueLocations中
             for (int i = 0; i < rawLocations.size(); i++) {
                 Token token = rawLocations.get(i);
                 while (i + 1 < rawLocations.size()) {
@@ -441,6 +453,7 @@ public class Recognizing {
 //            }
 
 
+            // 给每一个地名实体与行政区划词典进行比较，赋初始分数
             Map<String, Double> scores = new HashMap<>();
             for (Token token : trueLocations) {
                 String word = token.word;
@@ -462,6 +475,31 @@ public class Recognizing {
             }
 
 
+            // 如果scores为空，说明没有在行政区划词典中找到对应的地名，这时候就利用百度地图api进行查找。
+            if(scores.isEmpty() && !trueLocations.isEmpty()){
+                System.out.println("使用百度Api");
+                for(Token token : trueLocations){
+                    String location = token.word;
+                    Map<String, String> dataFromAPI = getDataByBaiduAPI(location);
+                    String name = dataFromAPI.get("name");
+                    String province = dataFromAPI.get("province");
+                    String city = dataFromAPI.get("city");
+                    String area = dataFromAPI.get("area");
+                    if(dictionary.containsKey(name)){
+                        scores.put(dictionary.get(name), 0.9);
+                    }else if(dictionary.containsKey(province)){
+                        String code = dictionary.get(province);
+                        scores.put(code, 0.9);
+                        if(badCities.contains(code)){
+                            scores.put(dictionary.get(area), 0.9);
+                        }else {
+                            scores.put(dictionary.get(city), 0.9);
+                        }
+                    }
+                }
+            }
+
+
 //            List<String> codes = new ArrayList<>(scores.keySet());
 //            Collections.sort(codes);
 //            System.out.println(codes);
@@ -476,6 +514,7 @@ public class Recognizing {
 //                }
 //            }
 
+            // 传递分数
             Map<String, Double> provinceScores = new LinkedHashMap<>();
             Map<String, Double> cityScores = new HashMap<>();
             for (Map.Entry<String, Double> entry : scores.entrySet()) {
@@ -630,16 +669,71 @@ public class Recognizing {
         return result;
     }
 
+    // 通过百度API获取每个地名实体所对应的行政区划
+    private static Map<String, String> getDataByBaiduAPI(String location) throws IOException {
+        URL url = new URL("http://api.map.baidu.com/place/v2/search?query=" + location + "&region=%E5%85%A8%E5%9B%BD&output=json&ak=rKjINv2twq4RVqooCO0iLgT152EilQSg");
+        System.out.println("url: " + url);
+        HttpURLConnection urlConn = (HttpURLConnection) url.openConnection();
+        urlConn.setConnectTimeout(50000);
+        urlConn.setReadTimeout(50000);
+        urlConn.setDoInput(true);
+        urlConn.setUseCaches(false);
+        urlConn.setRequestProperty("User-agent", "Mozilla/5.0 (Windows NT 5.1) AppleWebKit/535.1 (KHTML, like Gecko) Chrome/13.0.782.215 Safari/535.1");
+        urlConn.setRequestProperty("token", "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJrdGJpIiwicm9sZSI6IlJPTEVfVVNFUiIsImlzcyI6InRjbGVyIiwiZXhwIjoxNTk5ODA3Mzc5LCJpYXQiOjE1OTkyMDI1Nzl9.IciVkGcsYfD9hDacV4-lKkGFft-Z-LnEkmYtcDlPjYeN2styo3IA6dbE0JP08bmy8uS8sy3TL_65_fTbEoilow");
+        urlConn.setRequestProperty("Content-type", "application/x-java-serialized-object");
+        int code = urlConn.getResponseCode();//获得相应码
+        System.out.println("请求响应码:"+ code);
+        // 设置所有的http连接是否自动处理重定向；设置成true，系统自动处理重定向
+        urlConn.setInstanceFollowRedirects(true);
+        // 设置所有的http连接是否自动处理重定向；设置成true，系统自动处理重定向
+        urlConn.setInstanceFollowRedirects(true);
+        // 存储返回的字符串
+        String data = "";
+        //得到数据流（输入流）
+        InputStream is = urlConn.getInputStream();
+        byte[] buffer = new byte[1024];
+        int length = 0;
+
+        while ((length = is.read(buffer)) != -1) {
+            String str = new String(buffer, 0, length);
+            data += str;
+        }
+        System.out.println(data);
+        JSONArray results = JSON.parseObject(data).getJSONArray("results");
+        String name = "";
+        String province = "";
+        String city = "";
+        String area = "";
+        for(int i = 0; i < results.size(); i++){
+            JSONObject result = results.getJSONObject(i);
+            name = result.getString("name");
+            province = result.getString("province");
+            city = result.getString("city");
+            area = result.getString("area");
+            System.out.println(name + " " + province + " " + city + " " + area);
+            break;
+        }
+        Map<String, String> res = new HashMap<>();
+        res.put("name", name);
+        res.put("province", province);
+        res.put("city", city);
+        res.put("area", area);
+        return res;
+    }
 
 
-    public static void main(String[] args) {
+
+    public static void main(String[] args) throws IOException {
         if(args.length < 2){
             System.out.println("输入mongodb的表名和Mysql的表名");
-            return;
         }
-        String collection = args[0];
-        String tableName = args[1];
-        List<Document> records= getDataFromMongoDB("10.131.238.35", "Chinanews", new String[]{collection});
+
+//        String collection = args[0];
+//        String tableName = args[1];
+
+        String collection = "Hb";
+
+        List<Document> records= getDataFromMongoDB("127.0.0.1", "Chinanews", new String[]{collection});
         System.out.println("amount:" + records.size());
         records = preprocessing(records);
         System.out.println("amount:" + records.size());
@@ -647,6 +741,6 @@ public class Recognizing {
         records = recognize(records);
         System.out.println("amount:" + records.size());
         System.out.println(records.get(0));
-        MySQLUtils.insert(records, tableName);
+//        MySQLUtils.insert(records, tableName);
     }
 }

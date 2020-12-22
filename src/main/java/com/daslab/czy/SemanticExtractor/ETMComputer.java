@@ -310,31 +310,32 @@ public class ETMComputer {
         System.out.println("-------------开始训练全局InferenceLDA---------------");
 
 
-//        ReadParseDocs readParse = new ReadParseDocs(W, vocab, tableName);
-//        readParse.readDocs(startDate, endDate);
-//        readParse.parseDocs();
-//
-//        long time4=System.currentTimeMillis();
-//        writerTime.write("read global dataset time="+(time4-time3)+"\n");
-//
-//        int M=readParse.getM();
-//        int[][] docs=readParse.getDocs();
-//        int[] docLength=readParse.getDocLength();
-//
-//        writerM.write("global:" + M);
-//        writerM.write("\n");
-//
-//        writer.write(M+"\t");
-//
-//        long time5=System.currentTimeMillis();
+        ReadParseDocs readParse = new ReadParseDocs(W, vocab, tableName);
+        readParse.readIdsAndRawDocs(startDate, endDate);
+        readParse.parseIdsAndRawDocs();
+
+        long time4=System.currentTimeMillis();
+        writerTime.write("read global dataset time="+(time4-time3)+"\n");
+
+        int M = readParse.getM();
+        int[][] docs = readParse.getDocs();
+        int[] docLength = readParse.getDocLength();
+        int[] ids = readParse.getIds();
+
+        writerM.write("global:" + M);
+        writerM.write("\n");
+
+        writer.write(M+"\t");
+
+        long time5=System.currentTimeMillis();
         String globalTopicWordPath=writePath+"topicWordPro.txt";
-//        InferenceLDA inferlda=new InferenceLDA(localVectorK, iterNum, alpha, beta, docs, docLength, W, M, vocab, globalTopicWordPath);
-//        inferlda.initial();
-//        inferlda.inferInitial();
-//        writer.write(inferlda.inferGibbsSampling()+"\n");
-//        long time6=System.currentTimeMillis();
-//        writerTime.write("global dataset inferLDA time="+(time6-time5)+"\n");
-//        inferlda.writeDatasetTopicPro(writePath+"globalDatasetTopicPro.txt");
+        InferenceLDA inferlda=new InferenceLDA(localVectorK, iterNum, alpha, beta, docs, docLength, W, M, vocab, globalTopicWordPath);
+        inferlda.initial();
+        inferlda.inferInitial();
+        writer.write(inferlda.inferGibbsSampling()+"\n");
+        long time6=System.currentTimeMillis();
+        writerTime.write("global dataset inferLDA time="+(time6-time5)+"\n");
+        inferlda.writeDatasetTopicPro(writePath+"globalDatasetTopicPro.txt");
 
 
         System.out.println();
@@ -359,11 +360,12 @@ public class ETMComputer {
             System.out.println();
 
             ReadParseDocs readParseLocal = new ReadParseDocs(W, vocab, tableName);
-            readParseLocal.readDocs(date1, date2);
-            readParseLocal.parseDocs();
+            readParseLocal.readIdsAndRawDocs(date1, date2);
+            readParseLocal.parseIdsAndRawDocs();
             int MLocal = readParseLocal.getM();
             int[][] docsLocal = readParseLocal.getDocs();
             int[] docLengthLocal = readParseLocal.getDocLength();
+            int[] idsLocal = readParseLocal.getIds();
 
             writerM.write(date1 + ":" + MLocal);
             writerM.write("\n");
@@ -374,44 +376,46 @@ public class ETMComputer {
             inferldaLocal.inferGibbsSampling();
             inferldaLocal.writeDatasetTopicPro(writePath + date1 + "DatasetTopicPro.txt");
 
-//            for(String province : provinces.keySet()){
-//                ReadParseDocs readParsePro = new ReadParseDocs(W, vocab, tableName);
-//                readParsePro.readDocs(date1, date2, province);
-//                readParsePro.parseDocs();
-//                int MPro=readParsePro.getM();
-//                int[][] docsPro=readParsePro.getDocs();
-//                int[] docLengthPro=readParsePro.getDocLength();
-//
-//                writerM.write(province + ":" + MPro);
-//                writerM.write("\n");
-//
-//                InferenceLDA inferldaPro=new InferenceLDA(localVectorK, iterNum, alpha, beta, docsPro, docLengthPro, W, MPro, vocab, globalTopicWordPath);
-//                inferldaPro.initial();
-//                inferldaPro.inferInitial();
-//                inferldaPro.inferGibbsSampling();
-//                inferldaPro.writeDatasetTopicPro(writePath + "province/" + date1 + province + "DatasetTopicPro.txt");
-//
-//                for(String city : citys.keySet()){
-//                    if(!city.startsWith(province)){
-//                        continue;
-//                    }
-//                    ReadParseDocs readParseCity = new ReadParseDocs(W, vocab, tableName);
-//                    readParseCity.readDocs(date1, date2, province, city);
-//                    readParseCity.parseDocs();
-//                    int MCity = readParseCity.getM();
-//                    int[][] docsCity = readParseCity.getDocs();
-//                    int[] docLengthCity = readParseCity.getDocLength();
-//
-//                    writerM.write(city + ":" + MCity);
-//                    writerM.write("\n");
-//
-//                    InferenceLDA inferldaCity = new InferenceLDA(localVectorK, iterNum, alpha, beta, docsCity, docLengthCity, W, MCity, vocab, globalTopicWordPath);
-//                    inferldaCity.initial();
-//                    inferldaCity.inferInitial();
-//                    inferldaCity.inferGibbsSampling();
-//                    inferldaCity.writeDatasetTopicPro(writePath + "city/" + date1 + city + "DatasetTopicPro.txt");
-//                }
-//            }
+            for(String province : provinces.keySet()){
+                ReadParseDocs readParsePro = new ReadParseDocs(W, vocab, tableName);
+                readParsePro.readIdsAndRawDocs(date1, date2, province);
+                readParsePro.parseIdsAndRawDocs();
+                int MPro=readParsePro.getM();
+                int[][] docsPro=readParsePro.getDocs();
+                int[] docLengthPro=readParsePro.getDocLength();
+                int[] idsPro = readParsePro.getIds();
+
+                writerM.write(province + ":" + MPro);
+                writerM.write("\n");
+
+                InferenceLDA inferldaPro=new InferenceLDA(localVectorK, iterNum, alpha, beta, docsPro, docLengthPro, W, MPro, vocab, globalTopicWordPath);
+                inferldaPro.initial();
+                inferldaPro.inferInitial();
+                inferldaPro.inferGibbsSampling();
+                inferldaPro.writeDatasetTopicPro(writePath + "province/" + date1 + province + "DatasetTopicPro.txt");
+
+                for(String city : citys.keySet()){
+                    if(!city.startsWith(province)){
+                        continue;
+                    }
+                    ReadParseDocs readParseCity = new ReadParseDocs(W, vocab, tableName);
+                    readParseCity.readIdsAndRawDocs(date1, date2, province, city);
+                    readParseCity.parseIdsAndRawDocs();
+                    int MCity = readParseCity.getM();
+                    int[][] docsCity = readParseCity.getDocs();
+                    int[] docLengthCity = readParseCity.getDocLength();
+                    int[] idsCity = readParseCity.getIds();
+
+                    writerM.write(city + ":" + MCity);
+                    writerM.write("\n");
+
+                    InferenceLDA inferldaCity = new InferenceLDA(localVectorK, iterNum, alpha, beta, docsCity, docLengthCity, W, MCity, vocab, globalTopicWordPath);
+                    inferldaCity.initial();
+                    inferldaCity.inferInitial();
+                    inferldaCity.inferGibbsSampling();
+                    inferldaCity.writeDatasetTopicPro(writePath + "city/" + date1 + city + "DatasetTopicPro.txt");
+                }
+            }
         }
         writer.close();
         writerTime.close();

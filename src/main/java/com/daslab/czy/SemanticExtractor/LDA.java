@@ -7,9 +7,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class LDA {
-	private int K;
+	private  int K;
 	private int iterNum;
-	private float alpha;
+	private float alpha ;
 	private float beta;
 	private int[][] docs;
 	private int[] docLength;
@@ -20,7 +20,7 @@ public class LDA {
 	private int[][] docTopicNum;
 	private int[][] topicWordNum;
 	private int[] topicNum;
-	public LDA(){
+	public LDA() {
 		super();
 	}
 	public LDA(int K, int iterNum, float alpha, float beta, int[][] docs, int[] docLength, int W, int M, List<String> vocab){

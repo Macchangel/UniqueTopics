@@ -44,6 +44,7 @@ public class InferenceLDA {
 			docWordTopic[i]=new int[docLength[i]];
 		}
 	}
+
 	public void initial() throws IOException{
 		for(int i=0;i<M;i++)
 		{
@@ -61,6 +62,7 @@ public class InferenceLDA {
 		}
 		topicWordPro=readTopicWord(topicModelPath);
 	}
+
 	public double perplexity()
 	{
 		double perplexity=0;
@@ -82,6 +84,7 @@ public class InferenceLDA {
 		//System.out.println("perplexity="+Math.exp(-(nume_sum/deno_sum)));
 		return perplexity;
 	}
+
 	public void inferInitial(){
 		for(int i=0;i<M;i++)
 		{
@@ -93,6 +96,7 @@ public class InferenceLDA {
 			}
 		}
 	}
+
 	public float[][] readTopicWord(String filePath)throws IOException {
 		float[][] topicWordPro=new float[K][W];
 		InputStreamReader inStrR = new InputStreamReader(new FileInputStream(filePath));
@@ -174,6 +178,7 @@ public class InferenceLDA {
 		}
 		return outInfor;
 	}
+
 	public void writeDatasetTopicPro(String filePath)throws IOException{
 		File file=new File(filePath);
 		if (!file.exists()) {
