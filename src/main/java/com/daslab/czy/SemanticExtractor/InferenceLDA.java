@@ -211,4 +211,8 @@ public class InferenceLDA {
 		}
 		writer.close();
 	}
+
+	public int[][] getDocTopicNum() {
+		return docTopicNum;
+	}
 }

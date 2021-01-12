@@ -1,6 +1,18 @@
 package com.daslab.czy.SemanticExtractor;
 
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
 import com.daslab.czy.Utils.MySQLUtils;
+import org.apache.commons.io.FileUtils;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.HBaseConfiguration;
+import org.apache.hadoop.hbase.TableName;
+import org.apache.hadoop.hbase.client.Connection;
+import org.apache.hadoop.hbase.client.ConnectionFactory;
+import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Table;
+import scala.Int;
 
 import java.io.*;
 import java.text.ParseException;
@@ -32,8 +44,15 @@ public class ETMComputer {
     private HashMap<Integer, ArrayList<Float>> topicVector=new HashMap<>();
     private float[][] topicWordPro;
     private int localVectorK;
+    private int docDisplayNum;
+    private String hBaseLoc;
+    private String hBaseUrl;
+    private String hBaseTableName;
+    private TopicCubeSaver topicCubeSaver;
 
-    public ETMComputer(String tableName,int vocabSize,String startDate,String endDate,int localK,int globalK,String readPath,String writePath,int topK,double threshhold,int iterNum, List<String> vocab) throws IOException {
+
+
+    public ETMComputer(String tableName,int vocabSize,String startDate,String endDate,int localK,int globalK,String readPath,String writePath,int topK,double threshhold,int iterNum, List<String> vocab, int docDisplayNum, String hBaseLoc, String hBaseUrl, String hBaseTableName) throws IOException {
         this.tableName = tableName;
         this.readPath=readPath;
         this.vocabSize=vocabSize;
@@ -45,6 +64,10 @@ public class ETMComputer {
         this.topK=topK;
         this.threshhold=threshhold;
         this.iterNum=iterNum;
+        this.docDisplayNum=docDisplayNum;
+        this.hBaseLoc = hBaseLoc;
+        this.hBaseUrl = hBaseUrl;
+        this.hBaseTableName = hBaseTableName;
 
         this.vocab = vocab.subList(0, Math.min(vocabSize, vocab.size()));
         this.W = this.vocab.size();
@@ -52,6 +75,7 @@ public class ETMComputer {
 
         minKLDistance=new double[cellNum][localK];
         minKLDistanceGlobalIndex=new int[cellNum][localK];
+        topicCubeSaver = new TopicCubeSaver(hBaseLoc, hBaseUrl, hBaseTableName);
     }
 
     public float[][] readTopicWord(String filePath,int K,int W)throws IOException {
@@ -273,7 +297,7 @@ public class ETMComputer {
         return units;
     }
 
-    public void computeDatasetTopicPro() throws IOException, ParseException {
+    public void computeAndSaveDatasetTopicPro() throws IOException, ParseException {
         Map<String, String[]> citys = readNeighbor(readPath + "neighborWithoutOtherPro.txt");
         Map<String, String[]> provinces = readNeighbor(readPath + "chinaNeighbor.txt");
 
@@ -305,94 +329,84 @@ public class ETMComputer {
         BufferedWriter writer=new BufferedWriter(new FileWriter(file));
 //		writer.write(""+localVectorK);
 
-        long time3=System.currentTimeMillis();
         System.out.println();
-        System.out.println("-------------开始训练全局InferenceLDA---------------");
-
+        System.out.println("-------------开始训练InferenceLDA---------------");
+        long time5=System.currentTimeMillis();
 
         ReadParseDocs readParse = new ReadParseDocs(W, vocab, tableName);
         readParse.readIdsAndRawDocs(startDate, endDate);
         readParse.parseIdsAndRawDocs();
 
-        long time4=System.currentTimeMillis();
-        writerTime.write("read global dataset time="+(time4-time3)+"\n");
-
         int M = readParse.getM();
         int[][] docs = readParse.getDocs();
         int[] docLength = readParse.getDocLength();
         int[] ids = readParse.getIds();
+        Map<Integer, Integer> idToPos = readParse.getIdToPos();
 
-        writerM.write("global:" + M);
-        writerM.write("\n");
-
-        writer.write(M+"\t");
-
-        long time5=System.currentTimeMillis();
         String globalTopicWordPath=writePath+"topicWordPro.txt";
         InferenceLDA inferlda=new InferenceLDA(localVectorK, iterNum, alpha, beta, docs, docLength, W, M, vocab, globalTopicWordPath);
         inferlda.initial();
         inferlda.inferInitial();
         writer.write(inferlda.inferGibbsSampling()+"\n");
+
+        // compute every document's topic distribution
+        int[][] docTopicNum = inferlda.getDocTopicNum();
+        Map<Integer, List<Double>> docTopicDistribution = new HashMap();
+        for(int i = 0; i < M; i++){
+            int id = idToPos.get(i);
+            List<Double> topicPro = new ArrayList<>();
+            for(int j = 0; j < localVectorK; j++){
+                double pro = docTopicNum[i][j] == 0 ? 0.0 : (double) docTopicNum[i][j] / docLength[i];
+                topicPro.add(pro);
+            }
+            docTopicDistribution.put(id, topicPro);
+        }
+
         long time6=System.currentTimeMillis();
-        writerTime.write("global dataset inferLDA time="+(time6-time5)+"\n");
-        inferlda.writeDatasetTopicPro(writePath+"globalDatasetTopicPro.txt");
+        System.out.println("InferenceLDA完成，耗时：" + (time6 - time5) + "ms");
 
 
-        System.out.println();
-        System.out.println("-------------开始训练局部InferenceLDA---------------");
+        System.out.println("-------------开始保存结果---------------");
 
+        // Save the global cell  ("00")
+        saveCell("00", docTopicDistribution, ids);
+
+        // Save all cells
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
         Date startDt = sdf.parse(startDate);
         Date endDt = sdf.parse(endDate);
         Calendar rightNow = Calendar.getInstance();
         rightNow.setTime(startDt);
 
-
+        SimpleDateFormat monthSdf = new SimpleDateFormat("yyyyMM");
+        String rowKey;
 
         while(rightNow.getTime().compareTo(endDt) < 0) {
             String date1 = sdf.format(rightNow.getTime());
-            System.out.println(date1);
             rightNow.add(Calendar.MONTH, 1);
             rightNow.add(Calendar.DAY_OF_MONTH, -1);
             String date2 = sdf.format(rightNow.getTime());
-            System.out.println(date2);
             rightNow.add(Calendar.DAY_OF_MONTH, 1);
-            System.out.println();
 
             ReadParseDocs readParseLocal = new ReadParseDocs(W, vocab, tableName);
             readParseLocal.readIdsAndRawDocs(date1, date2);
             readParseLocal.parseIdsAndRawDocs();
-            int MLocal = readParseLocal.getM();
-            int[][] docsLocal = readParseLocal.getDocs();
-            int[] docLengthLocal = readParseLocal.getDocLength();
             int[] idsLocal = readParseLocal.getIds();
 
-            writerM.write(date1 + ":" + MLocal);
-            writerM.write("\n");
+            //save "20XXXX", granularity is MONTH
+            rowKey = "20" + monthSdf.format(sdf.parse(date1));
+            saveCell(rowKey, docTopicDistribution, idsLocal);
 
-            InferenceLDA inferldaLocal = new InferenceLDA(localVectorK, iterNum, alpha, beta, docsLocal, docLengthLocal, W, MLocal, vocab, globalTopicWordPath);
-            inferldaLocal.initial();
-            inferldaLocal.inferInitial();
-            inferldaLocal.inferGibbsSampling();
-            inferldaLocal.writeDatasetTopicPro(writePath + date1 + "DatasetTopicPro.txt");
 
             for(String province : provinces.keySet()){
                 ReadParseDocs readParsePro = new ReadParseDocs(W, vocab, tableName);
                 readParsePro.readIdsAndRawDocs(date1, date2, province);
                 readParsePro.parseIdsAndRawDocs();
-                int MPro=readParsePro.getM();
-                int[][] docsPro=readParsePro.getDocs();
-                int[] docLengthPro=readParsePro.getDocLength();
                 int[] idsPro = readParsePro.getIds();
 
-                writerM.write(province + ":" + MPro);
-                writerM.write("\n");
-
-                InferenceLDA inferldaPro=new InferenceLDA(localVectorK, iterNum, alpha, beta, docsPro, docLengthPro, W, MPro, vocab, globalTopicWordPath);
-                inferldaPro.initial();
-                inferldaPro.inferInitial();
-                inferldaPro.inferGibbsSampling();
-                inferldaPro.writeDatasetTopicPro(writePath + "province/" + date1 + province + "DatasetTopicPro.txt");
+                //save "22XXXX", granularity is MONTH and Province
+                rowKey = "22" + monthSdf.format(sdf.parse(date1)) + province;
+                saveCell(rowKey, docTopicDistribution, idsPro);
 
                 for(String city : citys.keySet()){
                     if(!city.startsWith(province)){
@@ -401,31 +415,94 @@ public class ETMComputer {
                     ReadParseDocs readParseCity = new ReadParseDocs(W, vocab, tableName);
                     readParseCity.readIdsAndRawDocs(date1, date2, province, city);
                     readParseCity.parseIdsAndRawDocs();
-                    int MCity = readParseCity.getM();
-                    int[][] docsCity = readParseCity.getDocs();
-                    int[] docLengthCity = readParseCity.getDocLength();
                     int[] idsCity = readParseCity.getIds();
 
-                    writerM.write(city + ":" + MCity);
-                    writerM.write("\n");
-
-                    InferenceLDA inferldaCity = new InferenceLDA(localVectorK, iterNum, alpha, beta, docsCity, docLengthCity, W, MCity, vocab, globalTopicWordPath);
-                    inferldaCity.initial();
-                    inferldaCity.inferInitial();
-                    inferldaCity.inferGibbsSampling();
-                    inferldaCity.writeDatasetTopicPro(writePath + "city/" + date1 + city + "DatasetTopicPro.txt");
+                    //save "21XXXX", granularity is MONTH and City
+                    rowKey = "21" + monthSdf.format(sdf.parse(date1)) + city;
+                    saveCell(rowKey, docTopicDistribution, idsCity);
                 }
             }
         }
-        writer.close();
-        writerTime.close();
-        writerM.close();
+    }
+
+    private void saveCell(String rowKey, Map<Integer, List<Double>> docTopicDistribution, int[] idsLocal) {
+        Map<Integer, List<Double>> docTopicDistributionLocal = computeDocTopicDistributionLocal(docTopicDistribution, idsLocal);
+        List<Double> topicDistribution = computeTopicDistribution(docTopicDistributionLocal);
+        List<List<Integer>> postingList = computePostingList(docTopicDistributionLocal);
+        int MLocal = idsLocal.length;
+        topicCubeSaver.saveToHBase(rowKey, topicDistribution, postingList, MLocal);
+    }
+
+
+    private Map<Integer, List<Double>> computeDocTopicDistributionLocal(Map<Integer, List<Double>> docTopicDistribution, int[] ids) {
+        Map<Integer, List<Double>> docTopicDistributionLocal = new HashMap<>();
+        for(int id : ids){
+            docTopicDistributionLocal.put(id, docTopicDistribution.get(id));
+        }
+        return docTopicDistributionLocal;
+    }
+
+    private List<Double> computeTopicDistribution(Map<Integer, List<Double>> docTopicDistribution) {
+        Double[] result = new Double[localVectorK];
+        int M = docTopicDistribution.size();
+        for(List<Double> topicDis : docTopicDistribution.values()){
+            for(int i = 0; i < localVectorK; i++){
+                result[i] += topicDis.get(i);
+            }
+        }
+        for(int i = 0; i < localVectorK; i++){
+            result[i] /= M;
+        }
+        return new ArrayList<>(Arrays.asList(result));
+    }
+
+    private List<List<Integer>> computePostingList(Map<Integer, List<Double>> docTopicDistribution) {
+        List<List<Integer>> result = new ArrayList<>();
+        for(int j = 0; j < localVectorK; j++){
+            List<Integer> topDoc = getTopDoc(docTopicDistribution, docDisplayNum, j);
+            result.add(topDoc);
+        }
+        return result;
+    }
+
+    private List<Integer> getTopDoc(Map<Integer, List<Double>> docTopicDistribution, int docDisplayNum, int topic) {
+        List<Integer> result = new ArrayList<>();
+        List<double[]> idsAndPros = new ArrayList<>();
+        for(Map.Entry<Integer, List<Double>> entry : docTopicDistribution.entrySet()){
+            idsAndPros.add(new double[]{entry.getKey(), entry.getValue().get(topic)});
+        }
+        if(docDisplayNum >= idsAndPros.size()){
+            Collections.sort(idsAndPros, (o1, o2) -> (Double.compare(o2[1], o1[1])));
+            for(double[] item : idsAndPros){
+                result.add((int)item[0]);
+            }
+            return result;
+        }else {
+            PriorityQueue<double[]> pq = new PriorityQueue<>(docDisplayNum, (o1, o2) -> (Double.compare(o1[1], o2[1])));
+            for(double[] item : idsAndPros){
+                if(pq.size() < docDisplayNum){
+                    pq.offer(item);
+                }else {
+                    if(item[1] > pq.peek()[1]){
+                        pq.poll();
+                        pq.offer(item);
+                    }
+                }
+            }
+            while (!pq.isEmpty()){
+                result.add((int)pq.poll()[0]);
+            }
+            Collections.reverse(result);
+            return result;
+        }
+
     }
 
 
     public static void main(String[] args) throws IOException, ParseException {
-        if(args.length != 11){
-            System.out.println("建议：news 7000 2019-01-01 2020-05-31 200 50 50 50 /home/scidb/czy/readPath/ /home/scidb/czy/writePath/ 3");
+        if(args.length != 14){
+            System.out.println("Please input : tableName vocabSize startDate endDate globalK iterNum topK localK readPath writePath threshold docDisplayNum hBaseLoc hBaseUrl");
+            System.out.println("建议：news 7000 2019-01-01 2020-05-31 200 50 50 50 /home/scidb/czy/readPath/ /home/scidb/czy/writePath/ 3 100 hbase.rootdir hdfs://localhost:9000/hbase");
             return;
         }
         String tableName = args[0];
@@ -439,10 +516,14 @@ public class ETMComputer {
         String readPath = args[8];
         String writePath = args[9];
         double threshold = Double.parseDouble(args[10]);
+        int docDisplayNum = Integer.parseInt(args[11]);
+        String hBaseLoc = args[12];
+        String hBaseUrl = args[13];
+        String hBaseTableName = args[14];
 
         String sql = "SELECT news_words from " + tableName + " WHERE news_date >= '" + startDate + "' AND news_date <= '" + endDate + "'";
         List<String> vocab = VocabularyConstructor.constructVocabulary(MySQLUtils.getWords(sql));
-        ETMComputer cetm = new ETMComputer(tableName, vocabSize, startDate, endDate, localK, globalK, readPath, writePath, topK, threshold, iterNum, vocab);
-        cetm.computeDatasetTopicPro();
+        ETMComputer cetm = new ETMComputer(tableName, vocabSize, startDate, endDate, localK, globalK, readPath, writePath, topK, threshold, iterNum, vocab, docDisplayNum, hBaseLoc, hBaseUrl, hBaseTableName);
+        cetm.computeAndSaveDatasetTopicPro();
     }
 }

@@ -19,6 +19,7 @@ public class ReadParseDocs {
     private String tableName;
     private Map<Integer, String> idsAndRawDocs;
     private int[] ids;
+    private Map<Integer, Integer> idToPos;
 
     public int getM() {
         return M;
@@ -50,6 +51,14 @@ public class ReadParseDocs {
 
     public Map<Integer, String> getIdAndRawDocs() {
         return idsAndRawDocs;
+    }
+
+    public Map<Integer, String> getIdsAndRawDocs() {
+        return idsAndRawDocs;
+    }
+
+    public Map<Integer, Integer> getIdToPos() {
+        return idToPos;
     }
 
     public int[] getDocLength() {
@@ -132,6 +141,7 @@ public class ReadParseDocs {
         for(Map.Entry<Integer, String> entry : idsAndRawDocs.entrySet()){
             int id = entry.getKey();
             ids[pos] = id;
+            idToPos.put(id, pos);
             String rawDoc = entry.getValue();
             String[] words = rawDoc.split(" ");
             List<Integer> wordsIndex = new ArrayList<>();

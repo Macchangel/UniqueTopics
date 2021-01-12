@@ -1,6 +1,6 @@
 package com.daslab.czy.SemanticExtractor;
 
-import com.daslab.czy.Utils.SerializeUtils;
+import antlr.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.TableName;
@@ -11,19 +11,24 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.List;
 
-public class TopicProSaver {
+public class TopicCubeSaver {
 
     String hBaseLoc;
     String hBaseUrl;
     String tableName;
     String colFamily;
 
-    public TopicProSaver(String hBaseLoc, String hBaseUrl, String tableName, String colFamily){
+    public TopicCubeSaver(String hBaseLoc, String hBaseUrl, String tableName) throws IOException {
         this.hBaseLoc = hBaseLoc;
         this.hBaseUrl = hBaseUrl;
         this.tableName = tableName;
-        this.colFamily = colFamily;
+
+        Configuration configuration = HBaseConfiguration.create();
+        configuration.set(hBaseLoc, hBaseUrl);
+        Connection connection = ConnectionFactory.createConnection(configuration);
+        Table table = connection.getTable(TableName.valueOf(tableName));
     }
 
     public void saveProToHbase(String dirPath, String prefix, int K) throws IOException {
@@ -234,25 +239,44 @@ public class TopicProSaver {
         System.out.println("已存入HBase，耗时：" + (endTime - startTime) + "ms");
     }
 
+    public void saveToHBase(String rowKey, List<Double> topicDistribution, List<List<Integer>> postingList, int M){
+        Put put = new Put(rowKey.getBytes());
+
+        //save topicDistribution
+        for(int i = 0; i < topicDistribution.size(); i++){
+            String col = "topic" + i;
+            String value = String.valueOf(topicDistribution.get(i));
+            put.addColumn("Topic Distribution".getBytes(), col.getBytes(), value.getBytes());
+        }
+
+        //save postingList
+        for(int i = 0; i < postingList.size(); i++){
+            String col = "topic" + i;
+            List<Integer> list = postingList.get(i);
+            String value = "";
+            for(int j = 0; j < list.size(); j++){
+                if(j != 0){
+                    value += ",";
+                }
+                value += list.get(j);
+            }
+            put.addColumn("Posting List".getBytes(), col.getBytes(), value.getBytes());
+        }
+
+        //save M
+        put.addColumn("Other Params".getBytes(), "M".getBytes(), String.valueOf(M).getBytes());
+    }
+
+
     public static void main(String[] args) throws IOException, ParseException {
-        String timePath = "/home/leaves1233/IdeaProjects/UniqueTopics/temp/data/time";
-        String provincePath = "/home/leaves1233/IdeaProjects/UniqueTopics/temp/data/province";
-        String cityPath = "/home/leaves1233/IdeaProjects/UniqueTopics/temp/data/city";
-
-        String timePrefix = "100";
-        String provincePrefix = "110";
-        String cityPrefix = "111";
-
-        int K = 680;
-
-        TopicProSaver tps = new TopicProSaver("hbase.rootdir", "hdfs://localhost:9000/hbase", "news_test", "topic");
+//        TopicCubeSaver tps = new TopicCubeSaver("hbase.rootdir", "hdfs://localhost:9000/hbase", "news_test", "topic");
 
 //        tps.saveToHbase(timePath, timePrefix, K);
 //        tps.saveToHbase(provincePath, provincePrefix, K);
 //        tps.saveProToHbase(cityPath, cityPrefix, K);
 //        tps.saveMToHbase("/home/leaves1233/IdeaProjects/UniqueTopics/temp/data/writePath2/M.txt", "100");
 //        tps.saveMToHbase2("/home/leaves1233/IdeaProjects/UniqueTopics/temp/data/M.txt", "110");
-        tps.saveMToHBase3("/home/leaves1233/IdeaProjects/UniqueTopics/temp/data/M.txt", "111");
+//        tps.saveMToHBase3("/home/leaves1233/IdeaProjects/UniqueTopics/temp/data/M.txt", "111");
     }
 
 
